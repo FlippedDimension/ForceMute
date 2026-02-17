@@ -611,10 +611,9 @@ class MuteService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val stopPending = PendingIntent.getActivity(
+        val stopPending = PendingIntent.getBroadcast(
             this, 4,
-            Intent(this, MuteActionActivity::class.java).setAction(ACTION_STOP)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+            Intent(this, MuteActionReceiver::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -625,10 +624,9 @@ class MuteService : Service() {
 
         if (isActive) {
             // Currently muted — show Unmute + Stop
-            val unmutePending = PendingIntent.getActivity(
+            val unmutePending = PendingIntent.getBroadcast(
                 this, 2,
-                Intent(this, MuteActionActivity::class.java).setAction(ACTION_UNMUTE)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+                Intent(this, MuteActionReceiver::class.java).setAction(ACTION_UNMUTE),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             val text = if (muteMic) "All audio + mic muted" else "All audio muted (mic on)"
@@ -638,16 +636,14 @@ class MuteService : Service() {
                 .addAction(android.R.drawable.ic_delete, "Stop", stopPending)
         } else {
             // Currently unmuted — show Mute, Mute All, Stop
-            val mutePending = PendingIntent.getActivity(
+            val mutePending = PendingIntent.getBroadcast(
                 this, 1,
-                Intent(this, MuteActionActivity::class.java).setAction(ACTION_MUTE)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+                Intent(this, MuteActionReceiver::class.java).setAction(ACTION_MUTE),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            val muteAllPending = PendingIntent.getActivity(
+            val muteAllPending = PendingIntent.getBroadcast(
                 this, 3,
-                Intent(this, MuteActionActivity::class.java).setAction(ACTION_MUTE_ALL)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+                Intent(this, MuteActionReceiver::class.java).setAction(ACTION_MUTE_ALL),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             builder.setContentTitle("Force Mute")

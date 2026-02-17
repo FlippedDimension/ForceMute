@@ -65,7 +65,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- Instant notification action receiver (fallback) -->
+        <!-- Instant notification action receiver -->
         <receiver
             android:name=".MuteActionReceiver"
             android:exported="false">
@@ -76,14 +76,6 @@
                 <action android:name="com.forcemute.app.ACTION_STOP" />
             </intent-filter>
         </receiver>
-
-        <!-- Invisible activity for notification buttons — closes shade instantly -->
-        <activity
-            android:name=".MuteActionActivity"
-            android:excludeFromRecents="true"
-            android:taskAffinity=""
-            android:theme="@android:style/Theme.NoDisplay"
-            android:exported="false" />
 
     </application>
 
