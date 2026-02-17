@@ -1,0 +1,11 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build and Deploy ForceMute",
+			"type": "shell",
+			"command": "$env:JAVA_HOME = \"$env:ProgramFiles\\Microsoft\\jdk-17.0.18.8-hotspot\"; $env:ANDROID_HOME = \"$env:LOCALAPPDATA\\Android\\Sdk\"; .\\gradlew.bat assembleDebug --rerun-tasks; Copy-Item app\\build\\outputs\\apk\\debug\\app-debug.apk ForceMute.apk -Force; & \"$env:LOCALAPPDATA\\Android\\Sdk\\platform-tools\\adb.exe\" -s 192.168.4.241:35609 install -r ForceMute.apk; & \"$env:LOCALAPPDATA\\Android\\Sdk\\platform-tools\\adb.exe\" -s 192.168.4.241:35609 shell pm grant com.forcemute.app android.permission.WRITE_SECURE_SETTINGS",
+			"isBackground": false
+		}
+	]
+}

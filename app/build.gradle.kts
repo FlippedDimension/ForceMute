@@ -11,8 +11,8 @@ android {
         applicationId = "com.forcemute.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 12
-        versionName = "1.11"
+        versionCode = 24
+        versionName = "1.23"
     }
 
     buildTypes {

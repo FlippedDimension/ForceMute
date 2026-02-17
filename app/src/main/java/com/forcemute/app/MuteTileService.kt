@@ -30,7 +30,7 @@ class MuteTileService : TileService() {
             MuteService.isActive = false
             prefs.edit().putBoolean(MainActivity.KEY_IS_MUTED, false).apply()
 
-            // Un-mute all streams
+            // Un-mute all streams (safe even if only call streams were muted)
             for (stream in MainActivity.ALL_STREAMS) {
                 try { audioManager.adjustStreamVolume(stream, AudioManager.ADJUST_UNMUTE, 0) } catch (_: Exception) { }
                 val saved = prefs.getInt("saved_vol_$stream", -1)
@@ -42,9 +42,10 @@ class MuteTileService : TileService() {
 
             stopService(Intent(this, MuteService::class.java))
         } else {
-            // Mute: save current volumes, then start service
+            // Mute: save current volumes, then start service (call-only by default)
             val editor = prefs.edit()
             editor.putBoolean(MainActivity.KEY_IS_MUTED, true)
+            editor.putBoolean(MainActivity.KEY_MUTE_ALL, false)
             for (stream in MainActivity.ALL_STREAMS) {
                 editor.putInt("saved_vol_$stream", audioManager.getStreamVolume(stream))
             }

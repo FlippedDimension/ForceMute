@@ -27,13 +27,22 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val NOTIFICATION_PERMISSION_CODE = 1001
+        private const val PHONE_STATE_PERMISSION_CODE = 1002
         const val PREFS_NAME = "ForceMutePrefs"
         const val KEY_IS_MUTED = "isMuted"
         const val KEY_START_ON_BOOT = "startOnBoot"
         const val KEY_MUTE_MIC = "muteMic"
         const val KEY_CAPTIONS = "captionsEnabled"
+        const val KEY_MUTE_ALL = "muteAll"
 
-        /** All audio streams we want to force-mute */
+        /** Call-related streams only (default mute mode) */
+        val CALL_STREAMS = intArrayOf(
+            AudioManager.STREAM_VOICE_CALL,
+            AudioManager.STREAM_RING,
+            AudioManager.STREAM_DTMF
+        )
+
+        /** All audio streams (mute-all mode) */
         val ALL_STREAMS = intArrayOf(
             AudioManager.STREAM_MUSIC,
             AudioManager.STREAM_RING,
@@ -63,6 +72,9 @@ class MainActivity : AppCompatActivity() {
 
         // ── Notification permission (Android 13+) ──────────────────────
         requestNotificationPermission()
+
+        // ── Phone state permission (for call detection) ────────────────
+        requestPhoneStatePermission()
 
         // ── DND access ─────────────────────────────────────────────────
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -125,6 +137,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun requestPhoneStatePermission() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.READ_PHONE_STATE),
+                PHONE_STATE_PERMISSION_CODE
+            )
+        }
+    }
+
     override fun onRequestPermissionsResult(
         requestCode: Int, permissions: Array<out String>, grantResults: IntArray
     ) {
@@ -148,6 +172,7 @@ class MainActivity : AppCompatActivity() {
     private fun startMuting() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
         prefs.putBoolean(KEY_IS_MUTED, true)
+        prefs.putBoolean(KEY_MUTE_ALL, false)  // default to call-only mute
         // Save current volumes so we can restore later
         for (stream in ALL_STREAMS) {
             prefs.putInt("saved_vol_$stream", audioManager.getStreamVolume(stream))
@@ -191,9 +216,14 @@ class MainActivity : AppCompatActivity() {
     private fun updateUI() {
         val active = isMuteActive()
         if (active) {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val muteAll = prefs.getBoolean(KEY_MUTE_ALL, false)
             toggleButton.text = "UNMUTE"
             toggleButton.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.unmute_color))
-            statusText.text = "\uD83D\uDD07  ALL SOUND IS FORCE MUTED\nA service is keeping all streams at zero."
+            statusText.text = if (muteAll)
+                "\uD83D\uDD07  ALL SOUND IS FORCE MUTED\nA service is keeping all streams at zero."
+            else
+                "\uD83D\uDD07  CALL AUDIO IS MUTED\nMedia and other audio can still play normally."
         } else {
             toggleButton.text = "FORCE MUTE ALL"
             toggleButton.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.mute_color))

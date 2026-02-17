@@ -7,8 +7,8 @@ import android.util.Log
 
 /**
  * Invisible Activity that handles notification action button taps.
- * Launching an Activity automatically collapses the notification shade,
- * making the action feel instant (no waiting for the shade UI to refresh).
+ * Launching an Activity automatically collapses the notification shade.
+ * Uses Theme.NoDisplay with all animations disabled to avoid visual artifacts.
  */
 class MuteActionActivity : Activity() {
 
@@ -39,5 +39,6 @@ class MuteActionActivity : Activity() {
         }
 
         finish()
+        overridePendingTransition(0, 0)
     }
 }

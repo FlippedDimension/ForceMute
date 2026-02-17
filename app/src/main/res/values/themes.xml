@@ -10,4 +10,9 @@
         <item name="android:navigationBarColor">#121212</item>
         <item name="android:windowBackground">#121212</item>
     </style>
+
+    <style name="Theme.ForceMute.Invisible" parent="@android:style/Theme.NoDisplay">
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowDisablePreview">true</item>
+    </style>
 </resources>

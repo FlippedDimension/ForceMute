@@ -15,6 +15,8 @@ import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
 import android.media.AudioRecordingConfiguration
 import android.media.AudioTrack
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.Handler
 import android.os.HandlerThread
@@ -53,9 +55,12 @@ class MuteService : Service() {
     private var audioFocusRequest: AudioFocusRequest? = null
     private var volumeObserver: ContentObserver? = null
     private var silentTrack: AudioTrack? = null
+    private var mediaTrack: AudioTrack? = null  // Silent STREAM_MUSIC track to force volume buttons to media
+    private var mediaSession: MediaSession? = null  // MediaSession to force volume buttons to STREAM_MUSIC
     private var playbackCallback: AudioManager.AudioPlaybackCallback? = null
     private var recordingCallback: AudioManager.AudioRecordingCallback? = null
     private var muteMic = false
+    private var muteAll = false
     private var captionsEnabled = false
     private var lastSpeechAlertTime = 0L
     private var captionsWereEnabled = false   // original Live Caption state before we turned it on
@@ -74,6 +79,12 @@ class MuteService : Service() {
             if (!isActive) return
             doMute()
             ensureSilentTrack()
+            // Keep MODE_IN_COMMUNICATION active to suppress call audio
+            try {
+                if (audioManager.mode != AudioManager.MODE_IN_COMMUNICATION) {
+                    audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                }
+            } catch (_: Exception) { }
             audioHandler?.postDelayed(this, POLL_INTERVAL_MS)
         }
     }
@@ -107,6 +118,7 @@ class MuteService : Service() {
         try {
             val prefs = getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
             muteMic = prefs.getBoolean(MainActivity.KEY_MUTE_MIC, false)
+            muteAll = prefs.getBoolean(MainActivity.KEY_MUTE_ALL, false)
             captionsEnabled = prefs.getBoolean(MainActivity.KEY_CAPTIONS, false)
             startForeground(NOTIFICATION_ID, buildNotification())
         } catch (e: Exception) {
@@ -119,7 +131,9 @@ class MuteService : Service() {
                 Log.d(TAG, "ACTION_MUTE")
                 isActive = true
                 muteMic = false
+                muteAll = false
                 saveMicPref()
+                saveMuteAllPref()
                 try { audioManager.isMicrophoneMute = false } catch (_: Exception) { }
                 updateNotification()  // instant UI feedback
                 audioHandler?.post { reestablishMuting() }  // heavy work on bg thread
@@ -138,6 +152,8 @@ class MuteService : Service() {
                 // Heavy cleanup on background thread so UI stays responsive
                 Thread({
                     stopSilentAudioTrack()
+                    stopMediaTrack()
+                    stopMediaSession()
                     dismissSpeechAlert()
                     restoreLiveCaption()
                     try {
@@ -193,7 +209,9 @@ class MuteService : Service() {
                 Log.d(TAG, "ACTION_MUTE_ALL")
                 isActive = true
                 muteMic = true
+                muteAll = true
                 saveMicPref()
+                saveMuteAllPref()
                 updateNotification()  // instant UI feedback
                 audioHandler?.post { reestablishMuting() }  // heavy work on bg thread
                 Log.d(TAG, "ACTION_MUTE_ALL done, isActive=$isActive")
@@ -221,19 +239,35 @@ class MuteService : Service() {
                     .edit().putInt("saved_ringer_mode", savedRingerMode).apply()
             } catch (_: Exception) { }
 
-            // Save and set DND to total silence (suppresses voice call audio)
-            try {
-                val nm = getSystemService(NotificationManager::class.java)
-                val currentFilter = nm.currentInterruptionFilter
-                if (currentFilter != NotificationManager.INTERRUPTION_FILTER_NONE) {
-                    savedInterruptionFilter = currentFilter
-                    nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
-                    Log.d(TAG, "Set DND to total silence (was $currentFilter)")
-                }
-                getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit().putInt("saved_interruption_filter", savedInterruptionFilter).apply()
-            } catch (e: Exception) { Log.e(TAG, "DND err", e) }
+            // Save and set DND
+            if (muteAll) {
+                try {
+                    val nm = getSystemService(NotificationManager::class.java)
+                    val currentFilter = nm.currentInterruptionFilter
+                    if (currentFilter != NotificationManager.INTERRUPTION_FILTER_NONE) {
+                        savedInterruptionFilter = currentFilter
+                        nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
+                        Log.d(TAG, "Set DND to total silence (was $currentFilter)")
+                    }
+                    getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit().putInt("saved_interruption_filter", savedInterruptionFilter).apply()
+                } catch (e: Exception) { Log.e(TAG, "DND err", e) }
+            } else {
+                // Call-only: DND alarms-only — blocks calls/notifications, allows media
+                try {
+                    val nm = getSystemService(NotificationManager::class.java)
+                    val currentFilter = nm.currentInterruptionFilter
+                    if (currentFilter != NotificationManager.INTERRUPTION_FILTER_ALARMS) {
+                        savedInterruptionFilter = currentFilter
+                        nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALARMS)
+                        Log.d(TAG, "Set DND to alarms-only for call muting (was $currentFilter)")
+                    }
+                    getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit().putInt("saved_interruption_filter", savedInterruptionFilter).apply()
+                } catch (e: Exception) { Log.e(TAG, "DND err", e) }
+            }
 
+            // Start silent voice-comm track + reactive callbacks (both modes)
             try { startSilentAudioTrack() } catch (e: Exception) { Log.e(TAG, "SilentTrack err", e) }
             try { registerPlaybackCallback() } catch (e: Exception) { Log.e(TAG, "PlaybackCb err", e) }
             try { registerVolumeObserver() } catch (e: Exception) { Log.e(TAG, "VolObs err", e) }
@@ -244,8 +278,12 @@ class MuteService : Service() {
         audioHandler?.removeCallbacks(pollRunnable)
         audioHandler?.post(pollRunnable)
 
-        try { requestExclusiveAudioFocus() } catch (e: Exception) { Log.e(TAG, "Focus err", e) }
         try { audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT } catch (_: Exception) { }
+        if (muteAll) {
+            try { requestAudioFocus() } catch (e: Exception) { Log.e(TAG, "Focus err", e) }
+        }
+        // Both modes: set MODE_IN_COMMUNICATION to suppress call audio
+        try { audioManager.mode = AudioManager.MODE_IN_COMMUNICATION } catch (_: Exception) { }
 
         // Update notification now that isActive is true
         updateNotification()
@@ -258,6 +296,8 @@ class MuteService : Service() {
         isActive = false
         audioHandler?.removeCallbacks(pollRunnable)
         stopSilentAudioTrack()
+        stopMediaTrack()
+        stopMediaSession()
         dismissSpeechAlert()
         restoreLiveCaption()
 
@@ -302,23 +342,41 @@ class MuteService : Service() {
         } catch (_: Exception) { }
     }
 
+    private fun saveMuteAllPref() {
+        try {
+            getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(MainActivity.KEY_MUTE_ALL, muteAll).apply()
+        } catch (_: Exception) { }
+    }
+
     // ── Core mute with re-entrancy guard ────────────────────────────────
 
     private fun doMute() {
         if (!isActive || isMuting) return
         isMuting = true
         try {
-            for (stream in MainActivity.ALL_STREAMS) {
-                try { audioManager.adjustStreamVolume(stream, AudioManager.ADJUST_MUTE, 0) } catch (_: Exception) { }
-                try { audioManager.setStreamVolume(stream, 0, 0) } catch (_: Exception) { }
+            if (muteAll) {
+                // Mute ALL streams aggressively
+                for (stream in MainActivity.ALL_STREAMS) {
+                    try { audioManager.adjustStreamVolume(stream, AudioManager.ADJUST_MUTE, 0) } catch (_: Exception) { }
+                    try { audioManager.setStreamVolume(stream, 0, 0) } catch (_: Exception) { }
+                }
+                try {
+                    getSystemService(NotificationManager::class.java)
+                        .setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
+                } catch (_: Exception) { }
+            } else {
+                // Call-only mode: aggressively mute call streams
+                for (stream in MainActivity.CALL_STREAMS) {
+                    try { audioManager.adjustStreamVolume(stream, AudioManager.ADJUST_MUTE, 0) } catch (_: Exception) { }
+                    try { audioManager.setStreamVolume(stream, 0, 0) } catch (_: Exception) { }
+                }
+                // Call-only: DND alarms-only to suppress call audio
+                try {
+                    getSystemService(NotificationManager::class.java)
+                        .setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALARMS)
+                } catch (_: Exception) { }
             }
-            // Voice call & alarm streams have min=1, force DND total silence
-            try {
-                getSystemService(NotificationManager::class.java)
-                    .setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
-            } catch (_: Exception) { }
-            // Route voice call to earpiece (much quieter than speaker)
-            try { audioManager.isSpeakerphoneOn = false } catch (_: Exception) { }
             if (muteMic) {
                 try { if (!audioManager.isMicrophoneMute) audioManager.isMicrophoneMute = true } catch (_: Exception) { }
             }
@@ -344,12 +402,19 @@ class MuteService : Service() {
         try { registerVolumeObserver() } catch (e: Exception) { Log.e(TAG, "VolObs err", e) }
         audioHandler?.removeCallbacks(pollRunnable)
         audioHandler?.post(pollRunnable)
-        try { requestExclusiveAudioFocus() } catch (e: Exception) { Log.e(TAG, "Focus err", e) }
-        try { audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT } catch (_: Exception) { }
         try {
             getSystemService(NotificationManager::class.java)
-                .setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
+                .setInterruptionFilter(
+                    if (muteAll) NotificationManager.INTERRUPTION_FILTER_NONE
+                    else NotificationManager.INTERRUPTION_FILTER_ALARMS
+                )
         } catch (_: Exception) { }
+        try { audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT } catch (_: Exception) { }
+        if (muteAll) {
+            try { requestAudioFocus() } catch (e: Exception) { Log.e(TAG, "Focus err", e) }
+        }
+        // Both modes: set MODE_IN_COMMUNICATION to suppress call audio
+        try { audioManager.mode = AudioManager.MODE_IN_COMMUNICATION } catch (_: Exception) { }
         // Save muted state
         try {
             getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
@@ -415,6 +480,98 @@ class MuteService : Service() {
         }
     }
 
+    // ── Silent Media Track (forces volume buttons to media stream) ────
+
+    private fun startMediaTrack() {
+        if (mediaTrack != null) return
+        val attrs = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+            .build()
+        val format = AudioFormat.Builder()
+            .setSampleRate(SAMPLE_RATE)
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+            .build()
+        val bufSize = AudioTrack.getMinBufferSize(
+            SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
+        )
+        if (bufSize <= 0) { Log.e(TAG, "Invalid media bufSize=$bufSize"); return }
+
+        val track = AudioTrack.Builder()
+            .setAudioAttributes(attrs)
+            .setAudioFormat(format)
+            .setBufferSizeInBytes(bufSize * 2)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+
+        track.play()
+        track.write(ByteArray(bufSize), 0, bufSize)
+
+        Thread({
+            val buf = ByteArray(bufSize)
+            while (true) {
+                try {
+                    if (track.playState != AudioTrack.PLAYSTATE_PLAYING) break
+                    track.write(buf, 0, buf.size)
+                } catch (_: Exception) { break }
+            }
+        }, "MediaTrackFeeder").apply { isDaemon = true }.start()
+
+        mediaTrack = track
+        Log.d(TAG, "Media track started (volume buttons -> media)")
+    }
+
+    private fun stopMediaTrack() {
+        mediaTrack?.let {
+            try { it.stop() } catch (_: Exception) { }
+            try { it.release() } catch (_: Exception) { }
+        }
+        mediaTrack = null
+    }
+
+    // ── MediaSession (forces volume buttons to STREAM_MUSIC) ───────────
+
+    private fun startMediaSession() {
+        if (mediaSession != null) return
+        try {
+            val session = MediaSession(this, "ForceMuteMedia")
+            session.setPlaybackState(
+                PlaybackState.Builder()
+                    .setState(PlaybackState.STATE_PLAYING, 0, 0f)
+                    .build()
+            )
+            session.isActive = true
+            mediaSession = session
+            Log.d(TAG, "MediaSession started (volume buttons -> media)")
+        } catch (e: Exception) {
+            Log.e(TAG, "MediaSession start err", e)
+        }
+    }
+
+    private fun stopMediaSession() {
+        mediaSession?.let {
+            try { it.isActive = false } catch (_: Exception) { }
+            try { it.release() } catch (_: Exception) { }
+        }
+        mediaSession = null
+    }
+
+    private fun requestMediaAudioFocus() {
+        // Request non-exclusive media audio focus to hint Android to route volume to media
+        val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            .setAcceptsDelayedFocusGain(true)
+            .setOnAudioFocusChangeListener { /* ignore */ }
+            .build()
+        audioManager.requestAudioFocus(req)
+    }
+
     // ── Playback / Recording callbacks ──────────────────────────────────
 
     private fun registerPlaybackCallback() {
@@ -431,8 +588,8 @@ class MuteService : Service() {
         val recCb = object : AudioManager.AudioRecordingCallback() {
             override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>?) {
                 reactiveMute()
-                if (isActive) {
-                    try { requestExclusiveAudioFocus() } catch (_: Exception) { }
+                if (isActive && muteAll) {
+                    try { requestAudioFocus() } catch (_: Exception) { }
                     // Speech detection: if captions enabled and someone is recording (likely a call)
                     if (captionsEnabled && configs != null && configs.isNotEmpty()) {
                         enableLiveCaption()
@@ -461,20 +618,24 @@ class MuteService : Service() {
     // ── Audio focus ─────────────────────────────────────────────────────
 
     private fun ensureAudioFocus() {
-        if (!isActive) return
+        if (!isActive || !muteAll) return
         try {
             val mode = audioManager.mode
             if (mode == AudioManager.MODE_IN_COMMUNICATION || mode == AudioManager.MODE_IN_CALL) {
-                requestExclusiveAudioFocus()
+                requestAudioFocus()
             }
         } catch (_: Exception) { }
     }
 
-    private fun requestExclusiveAudioFocus() {
+    private fun requestAudioFocus() {
         audioFocusRequest?.let {
             try { audioManager.abandonAudioFocusRequest(it) } catch (_: Exception) { }
         }
-        val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+        // muteAll: exclusive focus (blocks everything)
+        // call-only: non-exclusive focus (allows media to keep playing)
+        val focusGain = if (muteAll) AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+                        else AudioManager.AUDIOFOCUS_GAIN
+        val req = AudioFocusRequest.Builder(focusGain)
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
@@ -611,9 +772,11 @@ class MuteService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val stopPending = PendingIntent.getBroadcast(
+        val stopPending = PendingIntent.getActivity(
             this, 4,
-            Intent(this, MuteActionReceiver::class.java).setAction(ACTION_STOP),
+            Intent(this, MuteActionActivity::class.java).setAction(ACTION_STOP).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION
+            },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -624,26 +787,32 @@ class MuteService : Service() {
 
         if (isActive) {
             // Currently muted — show Unmute + Stop
-            val unmutePending = PendingIntent.getBroadcast(
+            val unmutePending = PendingIntent.getActivity(
                 this, 2,
-                Intent(this, MuteActionReceiver::class.java).setAction(ACTION_UNMUTE),
+                Intent(this, MuteActionActivity::class.java).setAction(ACTION_UNMUTE).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION
+                },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            val text = if (muteMic) "All audio + mic muted" else "All audio muted (mic on)"
+            val text = if (muteMic) "All audio + mic muted" else if (muteAll) "All audio muted (mic on)" else "Call audio muted (media can play)"
             builder.setContentTitle("Force Mute Active")
                 .setContentText(text)
                 .addAction(android.R.drawable.ic_lock_silent_mode_off, "Unmute", unmutePending)
                 .addAction(android.R.drawable.ic_delete, "Stop", stopPending)
         } else {
             // Currently unmuted — show Mute, Mute All, Stop
-            val mutePending = PendingIntent.getBroadcast(
+            val mutePending = PendingIntent.getActivity(
                 this, 1,
-                Intent(this, MuteActionReceiver::class.java).setAction(ACTION_MUTE),
+                Intent(this, MuteActionActivity::class.java).setAction(ACTION_MUTE).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION
+                },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            val muteAllPending = PendingIntent.getBroadcast(
+            val muteAllPending = PendingIntent.getActivity(
                 this, 3,
-                Intent(this, MuteActionReceiver::class.java).setAction(ACTION_MUTE_ALL),
+                Intent(this, MuteActionActivity::class.java).setAction(ACTION_MUTE_ALL).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION
+                },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             builder.setContentTitle("Force Mute")
