@@ -82,7 +82,7 @@
             android:name=".MuteActionActivity"
             android:excludeFromRecents="true"
             android:taskAffinity=""
-            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:theme="@android:style/Theme.NoDisplay"
             android:exported="false" />
 
     </application>
