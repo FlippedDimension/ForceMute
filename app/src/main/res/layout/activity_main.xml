@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#121212"
+    android:padding="32dp">
+
+    <!-- App title -->
+    <TextView
+        android:id="@+id/titleText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Force Mute"
+        android:textColor="#FFFFFF"
+        android:textSize="32sp"
+        android:textStyle="bold"
+        android:layout_marginTop="48dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Version -->
+    <TextView
+        android:id="@+id/versionText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="#666666"
+        android:textSize="12sp"
+        android:layout_marginTop="2dp"
+        app:layout_constraintTop_toBottomOf="@id/titleText"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Subtitle -->
+    <TextView
+        android:id="@+id/subtitleText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Override app volume locks"
+        android:textColor="#AAAAAA"
+        android:textSize="16sp"
+        android:layout_marginTop="4dp"
+        app:layout_constraintTop_toBottomOf="@id/versionText"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Big mute icon -->
+    <ImageView
+        android:id="@+id/muteIcon"
+        android:layout_width="120dp"
+        android:layout_height="120dp"
+        android:src="@drawable/ic_volume_off"
+        android:contentDescription="Mute icon"
+        app:tint="#FF5252"
+        app:layout_constraintTop_toBottomOf="@id/subtitleText"
+        app:layout_constraintBottom_toTopOf="@id/toggleButton"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Toggle button -->
+    <Button
+        android:id="@+id/toggleButton"
+        android:layout_width="0dp"
+        android:layout_height="72dp"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:text="FORCE MUTE ALL"
+        android:textColor="#FFFFFF"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:backgroundTint="@color/mute_color"
+        app:cornerRadius="16dp"
+        app:layout_constraintBottom_toTopOf="@id/statusText"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginBottom="32dp" />
+
+    <!-- Status text -->
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="Tap the button to silence every audio stream.\nApps won't be able to raise the volume."
+        android:textColor="#CCCCCC"
+        android:textSize="14sp"
+        android:textAlignment="center"
+        android:lineSpacingExtra="4dp"
+        android:layout_marginBottom="64dp"
+        app:layout_constraintBottom_toTopOf="@id/tileHint"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Quick Settings hint -->
+    <TextView
+        android:id="@+id/tileHint"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="Tip: Add the Force Mute tile to your Quick Settings for one-tap muting from the notification shade."
+        android:textColor="#888888"
+        android:textSize="12sp"
+        android:textAlignment="center"
+        android:layout_marginBottom="16dp"
+        app:layout_constraintBottom_toTopOf="@id/bootSwitch"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Start on boot toggle -->
+    <Switch
+        android:id="@+id/bootSwitch"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="Start muted on boot / keep in background"
+        android:textColor="#CCCCCC"
+        android:textSize="14sp"
+        android:thumbTint="#FF5252"
+        android:trackTint="#666666"
+        android:layout_marginBottom="12dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        app:layout_constraintBottom_toTopOf="@id/captionSwitch"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Speech detection / captions toggle -->
+    <Switch
+        android:id="@+id/captionSwitch"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="Detect speech &amp; alert while muted"
+        android:textColor="#CCCCCC"
+        android:textSize="14sp"
+        android:thumbTint="#FF9800"
+        android:trackTint="#666666"
+        android:layout_marginBottom="24dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>
