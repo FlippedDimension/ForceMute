@@ -201,6 +201,18 @@ class MuteService : Service() {
                         }
                     }
                     try { audioManager.isMicrophoneMute = false } catch (_: Exception) { }
+                    try { audioManager.ringerMode = savedRingerMode } catch (_: Exception) { }
+                    try {
+                        getSystemService(NotificationManager::class.java)
+                            .setInterruptionFilter(savedInterruptionFilter)
+                    } catch (_: Exception) { }
+                    try {
+                        if (audioManager.mode == AudioManager.MODE_IN_COMMUNICATION) {
+                            audioManager.mode = AudioManager.MODE_NORMAL
+                        }
+                    } catch (_: Exception) { }
+                    audioFocusRequest?.let { try { audioManager.abandonAudioFocusRequest(it) } catch (_: Exception) { } }
+                    audioFocusRequest = null
                 }
                 stopSelf()
                 return START_NOT_STICKY
