@@ -17,6 +17,7 @@ import android.media.AudioRecordingConfiguration
 import android.media.AudioTrack
 import android.net.Uri
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
@@ -29,7 +30,7 @@ class MuteService : Service() {
         private const val TAG = "ForceMute"
         const val CHANNEL_ID = "force_mute_channel"
         const val NOTIFICATION_ID = 1
-        private const val POLL_INTERVAL_MS = 150L
+        private const val POLL_INTERVAL_MS = 500L
         private const val SAMPLE_RATE = 8000
 
         const val ACTION_MUTE = "com.forcemute.app.ACTION_MUTE"
@@ -46,7 +47,9 @@ class MuteService : Service() {
     }
 
     private lateinit var audioManager: AudioManager
-    private val handler = Handler(Looper.getMainLooper())
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var audioThread: HandlerThread? = null
+    private var audioHandler: Handler? = null
     private var audioFocusRequest: AudioFocusRequest? = null
     private var volumeObserver: ContentObserver? = null
     private var silentTrack: AudioTrack? = null
@@ -71,7 +74,7 @@ class MuteService : Service() {
             if (!isActive) return
             doMute()
             ensureSilentTrack()
-            handler.postDelayed(this, POLL_INTERVAL_MS)
+            audioHandler?.postDelayed(this, POLL_INTERVAL_MS)
         }
     }
 
@@ -81,6 +84,11 @@ class MuteService : Service() {
         try {
             audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
             createNotificationChannel()
+
+            // Create background thread for audio operations
+            audioThread = HandlerThread("ForceMuteAudio").apply { start() }
+            audioHandler = Handler(audioThread!!.looper)
+
             // Restore saved ringer mode in case this is a fresh process
             // (field defaults to RINGER_MODE_NORMAL which may be wrong)
             val prefs = getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
@@ -114,7 +122,7 @@ class MuteService : Service() {
                 saveMicPref()
                 try { audioManager.isMicrophoneMute = false } catch (_: Exception) { }
                 updateNotification()  // instant UI feedback
-                reestablishMuting()   // heavy work after
+                audioHandler?.post { reestablishMuting() }  // heavy work on bg thread
                 Log.d(TAG, "ACTION_MUTE done, isActive=$isActive")
                 return START_STICKY
             }
@@ -122,7 +130,7 @@ class MuteService : Service() {
                 Log.d(TAG, "ACTION_UNMUTE")
                 // Stop muting instantly
                 isActive = false
-                handler.removeCallbacks(pollRunnable)
+                audioHandler?.removeCallbacks(pollRunnable)
 
                 // Update notification FIRST for instant UI feedback
                 updateNotification()
@@ -164,7 +172,7 @@ class MuteService : Service() {
             ACTION_STOP -> {
                 Log.d(TAG, "ACTION_STOP")
                 isActive = false
-                handler.removeCallbacks(pollRunnable)
+                audioHandler?.removeCallbacks(pollRunnable)
                 // Restore volumes if still muted
                 val prefs = getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
                 if (prefs.getBoolean(MainActivity.KEY_IS_MUTED, false)) {
@@ -187,7 +195,7 @@ class MuteService : Service() {
                 muteMic = true
                 saveMicPref()
                 updateNotification()  // instant UI feedback
-                reestablishMuting()   // heavy work after
+                audioHandler?.post { reestablishMuting() }  // heavy work on bg thread
                 Log.d(TAG, "ACTION_MUTE_ALL done, isActive=$isActive")
                 return START_STICKY
             }
@@ -233,8 +241,8 @@ class MuteService : Service() {
 
         doMute()
 
-        handler.removeCallbacks(pollRunnable)
-        handler.post(pollRunnable)
+        audioHandler?.removeCallbacks(pollRunnable)
+        audioHandler?.post(pollRunnable)
 
         try { requestExclusiveAudioFocus() } catch (e: Exception) { Log.e(TAG, "Focus err", e) }
         try { audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT } catch (_: Exception) { }
@@ -248,7 +256,7 @@ class MuteService : Service() {
     override fun onDestroy() {
         Log.d(TAG, "onDestroy")
         isActive = false
-        handler.removeCallbacks(pollRunnable)
+        audioHandler?.removeCallbacks(pollRunnable)
         stopSilentAudioTrack()
         dismissSpeechAlert()
         restoreLiveCaption()
@@ -276,6 +284,11 @@ class MuteService : Service() {
         } catch (_: Exception) { }
         audioFocusRequest?.let { try { audioManager.abandonAudioFocusRequest(it) } catch (_: Exception) { } }
         audioFocusRequest = null
+
+        // Shut down audio background thread
+        audioThread?.quitSafely()
+        audioThread = null
+        audioHandler = null
 
         super.onDestroy()
     }
@@ -329,8 +342,8 @@ class MuteService : Service() {
         try { startSilentAudioTrack() } catch (e: Exception) { Log.e(TAG, "SilentTrack err", e) }
         try { registerPlaybackCallback() } catch (e: Exception) { Log.e(TAG, "PlaybackCb err", e) }
         try { registerVolumeObserver() } catch (e: Exception) { Log.e(TAG, "VolObs err", e) }
-        handler.removeCallbacks(pollRunnable)
-        handler.post(pollRunnable)
+        audioHandler?.removeCallbacks(pollRunnable)
+        audioHandler?.post(pollRunnable)
         try { requestExclusiveAudioFocus() } catch (e: Exception) { Log.e(TAG, "Focus err", e) }
         try { audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT } catch (_: Exception) { }
         try {
@@ -412,7 +425,7 @@ class MuteService : Service() {
                 ensureAudioFocus()
             }
         }
-        audioManager.registerAudioPlaybackCallback(cb, handler)
+        audioManager.registerAudioPlaybackCallback(cb, audioHandler)
         playbackCallback = cb
 
         val recCb = object : AudioManager.AudioRecordingCallback() {
@@ -427,7 +440,7 @@ class MuteService : Service() {
                 }
             }
         }
-        audioManager.registerAudioRecordingCallback(recCb, handler)
+        audioManager.registerAudioRecordingCallback(recCb, audioHandler)
         recordingCallback = recCb
     }
 
@@ -435,7 +448,7 @@ class MuteService : Service() {
 
     private fun registerVolumeObserver() {
         if (volumeObserver != null) return
-        val observer = object : ContentObserver(handler) {
+        val observer = object : ContentObserver(audioHandler) {
             override fun onChange(selfChange: Boolean, uri: Uri?) {
                 // Only react if we didn't just mute (avoids feedback loop)
                 reactiveMute()
@@ -475,7 +488,7 @@ class MuteService : Service() {
         audioFocusRequest = req
         try { audioManager.mode = AudioManager.MODE_IN_COMMUNICATION } catch (_: Exception) { }
         // MODE_IN_COMMUNICATION can unmute voice call stream — re-mute immediately
-        handler.post { doMute() }
+        audioHandler?.post { doMute() }
     }
 
     // ── Notification ────────────────────────────────────────────────────
